@@ -92,7 +92,7 @@ jobs:
             docker pull ghcr.io/shoxake17/shoxprobackend:latest
             
             # Agar serveringizda docker-compose.yml bo'lsa:
-            docker compose up -d --force-recreate
+            docker-compose up -d --force-recreate
             
             docker logout ghcr.io
 
