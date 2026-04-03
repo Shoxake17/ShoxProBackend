@@ -1,6 +1,5 @@
 name: CI/CD Pipeline - ShoxPro Backend
 
-# ── 1. TRIGGERLAR (QACHON ISHGA TUSHISHI) ──
 on:
   push:
     branches: [ main ]
@@ -9,7 +8,7 @@ on:
     - cron: '0 0 * * *'
 
 jobs:
-  # ── 2. SAST SCAN (XAVFSIZLIK TAHLILI) ──
+  # 1. XAVFSIZLIK TAHLILI
   semgrep_sast:
     name: SAST - Semgrep
     runs-on: ubuntu-latest
@@ -47,7 +46,7 @@ jobs:
         with:
           sarif_file: semgrep.sarif
 
-  # ── 3. BUILD VA PUSH (DOCKER) ──
+  # 2. BUILD VA PUSH (Kichik harf muammosi hal qilingan)
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
@@ -68,10 +67,11 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/shoxprobackend:latest
+          # MUHIM: Shoxake17 o'rniga shoxake17 (kichik harfda)
+          tags: ghcr.io/shoxake17/shoxprobackend:latest
           no-cache: true
 
-  # ── 4. DEPLOY (SERVERGA O'RNATISH) ──
+  # 3. DEPLOY
   deploy:
     name: Deploy to VPS
     runs-on: ubuntu-latest
@@ -88,12 +88,15 @@ jobs:
             cd ~/shoxpro
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Agar docker-compose fayli serverda bo'lmasa, uni yaratish yoki yangilash kerak
-            docker pull ghcr.io/${{ github.repository_owner }}/shoxprobackend:latest
+            # Kichik harfdagi tagni tortib olamiz
+            docker pull ghcr.io/shoxake17/shoxprobackend:latest
+            
+            # Agar serveringizda docker-compose.yml bo'lsa:
             docker compose up -d --force-recreate
+            
             docker logout ghcr.io
 
-  # ── 5. DAST (OWASP ZAP SCAN) ──
+  # 4. DAST SCAN
   security_scan:
     name: OWASP ZAP Security Scan
     runs-on: ubuntu-latest
