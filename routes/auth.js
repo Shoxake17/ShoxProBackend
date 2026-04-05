@@ -10,7 +10,9 @@ const {
   verifyEmail,
   forgotPassword,
   resetPassword,
-  getMe
+  getMe,
+  createExchangeTicket,
+  exchangeTicket
 } = require('../controllers/authController');
 
 const {
@@ -121,5 +123,15 @@ router.get('/google/callback', googleRedirectCallback);
 
 // GET /api/auth/me
 router.get('/me', protect, getMe);
+
+// ────────────────────────────────────────────
+//  EXCHANGE TICKET (Ilovalararo o'tish)
+// ────────────────────────────────────────────
+
+// POST /api/auth/exchange-ticket/create
+router.post('/exchange-ticket/create', protect, createExchangeTicket);
+
+// POST /api/auth/exchange-ticket/consume
+router.post('/exchange-ticket/consume', exchangeTicket);
 
 module.exports = router;

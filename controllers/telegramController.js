@@ -182,18 +182,20 @@ exports.verifyTelegramCode = async (req, res) => {
     const isProduction = process.env.NODE_ENV === 'production';
 
     res.cookie('access-token', accessToken, {
-      httpOnly: true,
-      secure:   isProduction,
-      sameSite: 'Strict',
-      maxAge:   60 * 60 * 1000,
+      httpOnly: false,
+      secure: true,
+      domain: '.shoxpro.uz',
+      sameSite: 'Lax',
+      maxAge: 60 * 60 * 1000,
     });
 
     res.cookie('refresh-token', refreshToken, {
       httpOnly: true,
-      secure:   isProduction,
-      sameSite: 'Strict',
-      maxAge:   7 * 24 * 60 * 60 * 1000,
-      path:     '/api/auth/refresh',
+      secure: true,
+      domain: '.shoxpro.uz',
+      sameSite: 'Lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
     });
 
     res.status(201).json({

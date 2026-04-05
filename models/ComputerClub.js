@@ -45,6 +45,14 @@ const ComputerClubSchema = new mongoose.Schema({
     isAvailable: {
       type: Boolean,
       default: true
+    },
+    totalEarnings: {
+      type: Number,
+      default: 0
+    },
+    totalHours: {
+      type: Number,
+      default: 0
     }
   }]
 }, { timestamps: true });

@@ -53,7 +53,7 @@ router.post('/register', verifyPosSecret, async (req, res) => {
             receipt_id: receiptId,
             total_amount: totalAmount,
             cashback_amount: cashbackAmount,
-            store_name: storeName || 'ShoxPosPro',
+            store_name: storeName || '{club.name}',
             expires_at: expiresAt,
             is_used: false,
             qr_signature: signature,

@@ -83,7 +83,8 @@ const UserSchema = new mongoose.Schema({
     unique: true,
     sparse: true, // sparse: true qilib o'zgartirildi, chunki adminlarda bo'lmasligi mumkin
     match: [/^\d{16}$/, '16 xonali raqam bo\'lishi kerak'],
-    default: null,
+    set: (v) => (v === null || v === '' ? undefined : v), // Null yoki bo'sh bo'lsa, undefined qilamiz (sparse index ishlashi uchun)
+    default: undefined,
   },
 
   isEmailVerified: {
@@ -110,13 +111,15 @@ UserSchema.pre('save', async function () {
     this.password = await bcrypt.hash(this.password, salt);
   }
 
-  // 2. Karta raqamini faqat 'user' roli uchun yaratish
-  if (this.isNew) {
-    if (this.role === 'user') {
+  // 2. Karta raqamini faqat 'user' roli uchun boshqarish
+  if (this.isModified('role')) {
+    if (this.role !== 'user') {
+      this.cardNumber = undefined;
+    } else if (this.role === 'user' && !this.cardNumber) {
       this.cardNumber = generateCardNumber();
-    } else {
-      this.cardNumber = null; // Admin va Super Admin uchun karta raqami yo'q
     }
+  } else if (this.isNew && this.role === 'user' && !this.cardNumber) {
+    this.cardNumber = generateCardNumber();
   }
 });
 

@@ -29,12 +29,19 @@ const sendTokenCookies = (res, userId) => {
   const isProduction = process.env.NODE_ENV === 'production';
 
   res.cookie('access-token', accessToken, {
-    httpOnly: true, secure: isProduction, sameSite: 'Strict',
+    httpOnly: false, // Frontend ham o'qiy olishi uchun
+    secure: true,
+    domain: '.shoxpro.uz', // MUHIM: barcha subdomenlar uchun
+    sameSite: 'Lax',
     maxAge: 60 * 60 * 1000,
   });
   res.cookie('refresh-token', refreshToken, {
-    httpOnly: true, secure: isProduction, sameSite: 'Strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000, path: '/api/auth/refresh',
+    httpOnly: true,
+    secure: true,
+    domain: '.shoxpro.uz',
+    sameSite: 'Lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000, 
+    path: '/api/auth/refresh',
   });
 
   return { accessToken };

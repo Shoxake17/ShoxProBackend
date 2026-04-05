@@ -8,14 +8,14 @@ const { sendEmail } = require('../utils/email');
 // ─── JWT Yaratish ───
 const signAccessToken = (userId) =>
   jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '1h',
+    expiresIn: '15m', // 15 daqiqa
     issuer: 'secureauth',
     audience: 'secureauth-client'
   });
 
 const signRefreshToken = (userId) =>
   jwt.sign({ id: userId }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    expiresIn: '30d', // 1 oy (30 kun)
     issuer: 'secureauth',
     audience: 'secureauth-client'
   });
@@ -27,21 +27,23 @@ const sendTokenCookies = (res, userId) => {
 
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Access Token — 1 soat
+  // Access Token — 15 daqiqa
   res.cookie('access-token', accessToken, {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: 'Strict',
-    maxAge: 60 * 60 * 1000  // 1 soat
+    secure: true,
+    domain: isProduction ? '.shoxpro.uz' : undefined,
+    sameSite: isProduction ? 'None' : 'Lax',
+    maxAge: 15 * 60 * 1000 
   });
 
-  // Refresh Token — 7 kun
+  // Refresh Token — 30 kun
   res.cookie('refresh-token', refreshToken, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'Strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000,  // 7 kun
-    path: '/api/auth/refresh'          // Faqat bu yo'lda ishlaydi
+    domain: isProduction ? '.shoxpro.uz' : undefined,
+    sameSite: isProduction ? 'None' : 'Strict',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    path: '/api/auth/refresh'
   });
 
   return { accessToken };
@@ -215,7 +217,7 @@ exports.login = async (req, res) => {
     await user.onLoginSuccess();
 
     // ── Token va Cookie yuborish ──
-    const { accessToken } = sendTokenCookies(res, user._id);
+    sendTokenCookies(res, user._id);
 
     res.status(200).json({
       success: true,
@@ -229,8 +231,7 @@ exports.login = async (req, res) => {
           isEmailVerified: user.isEmailVerified,
           role:            user.role,
           avatar:          user.avatar
-        },
-        accessToken // Frontend localStorage uchun ham yuboriladi
+        }
       }
     });
 
@@ -276,8 +277,8 @@ exports.refreshToken = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Foydalanuvchi topilmadi' });
     }
 
-    const { accessToken } = sendTokenCookies(res, user._id);
-    res.status(200).json({ success: true, accessToken });
+    sendTokenCookies(res, user._id);
+    res.status(200).json({ success: true });
 
   } catch (err) {
     console.error('Refresh token xatosi:', err);
@@ -447,6 +448,109 @@ exports.getMe = async (req, res) => {
     }
     res.status(200).json({ success: true, data: user.toSafeObject() });
   } catch (err) {
+    res.status(500).json({ success: false, message: 'Server xatosi' });
+  }
+};
+
+// ══════════════════════════════════════
+//  9. EXCHANGE TICKET (Ilovalararo xavfsiz o'tish)
+// ══════════════════════════════════════
+
+// In-memory storage (Vaqtinchalik, Redis bo'lsa yaxshi)
+const exchangeTickets = new Map();
+const ticketResults   = new Map(); // Keshlangan natijalar (Double-call uchun)
+
+// Har minutda eskirgan ticketlarni tozalash
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, data] of exchangeTickets.entries()) {
+    if (data.expiresAt < now) exchangeTickets.delete(id);
+  }
+  // Keshni ham tozalash (masalan, 5 daqiqadan oshganlari)
+  for (const [id, data] of ticketResults.entries()) {
+    if (data.timestamp + 300000 < now) ticketResults.delete(id);
+  }
+}, 60000);
+
+exports.createExchangeTicket = async (req, res) => {
+  try {
+    const ticketId = crypto.randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + 120 * 1000; // 2 daqiqa amal qiladi
+
+    exchangeTickets.set(ticketId, {
+      userId: req.user.id,
+      expiresAt
+    });
+
+    res.status(200).json({
+      success: true,
+      ticket: ticketId
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server xatosi' });
+  }
+};
+
+exports.exchangeTicket = async (req, res) => {
+  try {
+    const { ticket } = req.body;
+    if (!ticket) {
+      return res.status(400).json({ success: false, message: 'Ticket kiritilishi shart' });
+    }
+
+    // ─── DOUBLE-CALL (STRICT MODE) PROTECTION ───
+    // Agar bu ticket allaqachon so'ralgan bo'lsa (oxirgi 10 soniya ichida), 
+    // keshdagi javobni qaytaramiz (Xatolik bermaslik uchun)
+    if (ticketResults.has(ticket)) {
+      console.log('🛡️ [Backend] Ticket Double-call aniqlandi (Cached result yuborilmoqda)');
+      return res.status(200).json(ticketResults.get(ticket).payload);
+    }
+
+    const data = exchangeTickets.get(ticket);
+    if (!data || data.expiresAt < Date.now()) {
+      if (data) exchangeTickets.delete(ticket);
+      return res.status(400).json({ success: false, message: 'Ticket yaroqsiz yoki muddati tugagan' });
+    }
+
+    // Bir martalik ishlatish: asl ticketni darhol o'chiramiz
+    exchangeTickets.delete(ticket);
+
+    const user = await User.findById(data.userId);
+    if (!user || !user.isActive) {
+      return res.status(404).json({ success: false, message: 'Foydalanuvchi topilmadi' });
+    }
+
+    // Token va Cookie yuborish
+    const { accessToken } = sendTokenCookies(res, user._id);
+
+    const responsePayload = {
+      success: true,
+      data: {
+        user: {
+          id:              user._id,
+          firstName:       user.firstName,
+          lastName:        user.lastName,
+          email:           user.email,
+          isEmailVerified: user.isEmailVerified,
+          role:            user.role,
+          avatar:          user.avatar,
+          cardNumber:      user.cardNumber
+        },
+        accessToken
+      }
+    };
+
+    // ─── KESHGA SAQLASH (10 soniya davomida xavfsiz qayta chaqirish uchun) ───
+    ticketResults.set(ticket, {
+      payload: responsePayload,
+      timestamp: Date.now()
+    });
+    // 10 soniyadan keyin keshdan o'chirib yuborish
+    setTimeout(() => ticketResults.delete(ticket), 10000);
+
+    res.status(200).json(responsePayload);
+  } catch (err) {
+    console.error('Exchange ticket xatosi:', err);
     res.status(500).json({ success: false, message: 'Server xatosi' });
   }
 };

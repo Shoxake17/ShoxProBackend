@@ -14,7 +14,7 @@ const helmetConfig = helmet({
       styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
       imgSrc:      ["'self'", 'data:', 'https://lh3.googleusercontent.com'],
-      connectSrc:  ["'self'"],
+      connectSrc:  ["'self'", 'https://dev-api.shoxpro.uz', 'wss://dev-api.shoxpro.uz', 'https://dev-pay.shoxpro.uz', 'https://dev-game.shoxpro.uz', 'https://dev-admin-game.shoxpro.uz', 'https://dev-super.shoxpro.uz'],
       frameSrc:    ["'none'"],
       objectSrc:   ["'none'"],
       upgradeInsecureRequests: [],
@@ -50,13 +50,13 @@ const corsConfig = cors({
 
 // ─── 3. RATE LIMITERS ───
 
-// Login: 5 ta urinish / 15 daqiqa (IP + Email boyicha)
+// Login: 100 ta urinish / 15 daqiqa (Development uchun oshirildi)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: process.env.NODE_ENV === 'production' ? 5 : 100,
   message: {
     success: false,
-    message: 'Juda kop urinish. 15 daqiqadan song qayta urinib koring.'
+    message: 'Juda kop urinish. Keyinroq qayta urinib koring.'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -67,23 +67,23 @@ const loginLimiter = rateLimit({
   }
 });
 
-// Register: 3 ta urinish / 30 daqiqa (IP boyicha)
+// Register: 100 ta urinish / 30 daqiqa (Development uchun oshirildi)
 const registerLimiter = rateLimit({
   windowMs: 30 * 60 * 1000,
-  max: 3,
+  max: process.env.NODE_ENV === 'production' ? 3 : 100,
   message: {
     success: false,
-    message: 'Royxatdan otish cheklandi. 30 daqiqadan song qayta urinib koring.'
+    message: 'Royxatdan otish cheklandi. Keyinroq qayta urinib koring.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req, res) => ipKeyGenerator(req, res)
 });
 
-// Umumiy API: 100 ta sorov / 15 daqiqa
+// Umumiy API: 1000 ta sorov / 15 daqiqa (Development uchun oshirildi)
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: process.env.NODE_ENV === 'production' ? 500 : 2000, // Productionda 500, Devda 2000
   message: {
     success: false,
     message: 'Juda kop sorov. Keyinroq urinib koring.'
