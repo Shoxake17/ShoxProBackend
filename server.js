@@ -29,6 +29,11 @@ const io = require('socket.io')(http, {
   cors: {
     // Hamma subdomenlaringizga ruxsat beramiz
     origin: [
+      "https://pay.shoxpro.uz",
+      "https://game.shoxpro.uz",
+      "https://admin-game.shoxpro.uz",
+      "https://super-admin.shoxpro.uz",
+      "https://api.shoxpro.uz",
       "https://dev-pay.shoxpro.uz",
       "https://dev-game.shoxpro.uz",
       "https://dev-admin-game.shoxpro.uz",
