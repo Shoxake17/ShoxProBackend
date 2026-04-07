@@ -139,23 +139,29 @@ const generateCsrfToken = (req, res, next) => {
 
 // YANGI:
 const verifyCsrfToken = (req, res, next) => {
-  // Development da CSRF tekshiruvini o'tkazib yuborish
+  // 1. Development rejimida bo'lsa yoki GET so'rov bo'lsa o'tkazib yuborish
   if (process.env.NODE_ENV === 'development') return next();
-
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+  // 2. MUHIM: Login va Register uchun CSRF tekshiruvini o'tkazib yuborish
+  // Chunki bu vaqtda foydalanuvchida hali cookie/session bo'lmasligi mumkin
+  const publicRoutes = ['/api/auth/login', '/api/auth/register'];
+  if (publicRoutes.includes(req.path)) return next();
 
   const cookieToken = req.cookies && req.cookies['csrf-token'];
   const headerToken = req.headers['x-csrf-token'] || (req.body && req.body._csrf);
 
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    // Log yozamiz nima xato bo'layotganini ko'rish uchun
+    console.warn(`⚠️ CSRF Bloklandi: IP: ${req.ip}, Path: ${req.path}`);
+    
     return res.status(403).json({
       success: false,
-      message: 'CSRF token tekshiruvi muvaffaqiyatsiz'
+      message: 'CSRF token tekshiruvi muvaffaqiyatsiz. Iltimos, sahifani yangilang.'
     });
   }
   next();
 };
-
 // ─── 6. XSS PREVENTION — Input tozalash ───
 const sanitizeInput = (req, res, next) => {
   const sanitize = (obj) => {

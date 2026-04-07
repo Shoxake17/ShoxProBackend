@@ -1,49 +1,65 @@
-// controllers/authController.js — Autentifikatsiya Controlleri
-const jwt        = require('jsonwebtoken');
-const crypto     = require('crypto');
-const validator  = require('validator');
-const User       = require('../models/User');
+// controllers/authController.js
+'use strict';
+
+const jwt       = require('jsonwebtoken');
+const crypto    = require('crypto');
+const validator = require('validator');
+const User      = require('../models/User');
 const { sendEmail } = require('../utils/email');
 
-// ─── JWT Yaratish ───
+// ══════════════════════════════════════
+//  JWT YARATISH
+// ══════════════════════════════════════
 const signAccessToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: '15m', // 15 daqiqa
-    issuer: 'secureauth',
-    audience: 'secureauth-client'
-  });
+  jwt.sign(
+    { id: userId },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m', issuer: 'shoxpay', audience: 'shoxpay-client' }
+  );
 
 const signRefreshToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: '30d', // 1 oy (30 kun)
-    issuer: 'secureauth',
-    audience: 'secureauth-client'
-  });
+  jwt.sign(
+    { id: userId },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: '30d', issuer: 'shoxpay', audience: 'shoxpay-client' }
+  );
 
-// ─── Cookie orqali Token Yuborish ───
+// ══════════════════════════════════════
+//  COOKIE O'RNATISH
+//  ✅ ASOSIY TUZATISH: COOKIE_DOMAIN .env dan olinadi
+//  Dev serverlarda ham cross-subdomain ishlashi uchun
+// ══════════════════════════════════════
 const sendTokenCookies = (res, userId) => {
   const accessToken  = signAccessToken(userId);
   const refreshToken = signRefreshToken(userId);
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  // .env da belgilang:
+  // COOKIE_DOMAIN=.shoxpro.uz  (dev va prod ikkalasida ham)
+  const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
 
-  // Access Token — 15 daqiqa
+  // COOKIE_DOMAIN bo'lsa cross-origin — secure + sameSite=None kerak
+  // Bo'lmasa localhost — secure=false + sameSite=Lax
+  const isSecure   = !!cookieDomain;
+  const sameSite   = cookieDomain ? 'None' : 'Lax';
+
+  console.log(`🍪 Cookie o'rnatilmoqda | domain: ${cookieDomain} | secure: ${isSecure} | sameSite: ${sameSite}`);
+
   res.cookie('access-token', accessToken, {
     httpOnly: true,
-    secure: true,
-    domain: isProduction ? '.shoxpro.uz' : undefined,
-    sameSite: isProduction ? 'None' : 'Lax',
-    maxAge: 15 * 60 * 1000 
+    secure:   isSecure,
+    domain:   cookieDomain,
+    sameSite: sameSite,
+    maxAge:   15 * 60 * 1000, // 15 daqiqa
+    path:     '/',
   });
 
-  // Refresh Token — 30 kun
   res.cookie('refresh-token', refreshToken, {
     httpOnly: true,
-    secure: isProduction,
-    domain: isProduction ? '.shoxpro.uz' : undefined,
-    sameSite: isProduction ? 'None' : 'Strict',
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-    path: '/api/auth/refresh'
+    secure:   isSecure,
+    domain:   cookieDomain,
+    sameSite: sameSite,
+    maxAge:   30 * 24 * 60 * 60 * 1000, // 30 kun
+    path:     '/api/auth/refresh',
   });
 
   return { accessToken };
@@ -56,96 +72,80 @@ exports.register = async (req, res) => {
   try {
     const { firstName, lastName, email, password, confirmPassword } = req.body;
 
-    // ── Validatsiya ──
     if (!firstName || !lastName || !email || !password || !confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Barcha maydonlarni to\'ldiring' });
+      return res.status(400).json({ success: false, message: "Barcha maydonlarni to'ldiring" });
     }
-
     if (!validator.isEmail(email)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri email format' });
+      return res.status(400).json({ success: false, message: "Noto'g'ri email format" });
     }
-
     if (password !== confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Parollar mos kelmaydi' });
+      return res.status(400).json({ success: false, message: "Parollar mos kelmaydi" });
     }
-
     if (password.length < 8 || password.length > 128) {
-      return res.status(400).json({ success: false, message: 'Parol 8–128 ta belgi bo\'lishi kerak' });
+      return res.status(400).json({ success: false, message: "Parol 8–128 ta belgi bo'lishi kerak" });
     }
-
-    // Parol murakkablik tekshiruvi
-    const strongPassword = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password);
-    if (!strongPassword) {
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) {
       return res.status(400).json({
         success: false,
-        message: 'Parolda kichik harf, katta harf va raqam bo\'lishi kerak'
+        message: "Parolda kichik harf, katta harf va raqam bo'lishi kerak",
       });
     }
 
-    // ── Email mavjudligi tekshiruvi ──
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      // Timing attack'ni oldini olish uchun bir xil javob
-      return res.status(400).json({
-        success: false,
-        message: 'Bu email bilan hisob yaratib bo\'lmadi'
-      });
+      return res.status(400).json({ success: false, message: "Bu email bilan hisob yaratib bo'lmadi" });
     }
 
-    // ── Foydalanuvchi Yaratish ──
-    const userRole = (email.toLowerCase().trim() === 'turaxonovshoxrux14@gmail.com') ? 'super-admin' : 'user';
+    const role = email.toLowerCase().trim() === 'turaxonovshoxrux14@gmail.com'
+      ? 'super-admin' : 'user';
 
     const user = await User.create({
-      firstName: firstName.trim(),
-      lastName:  lastName.trim(),
-      email:     email.toLowerCase().trim(),
+      firstName:    firstName.trim(),
+      lastName:     lastName.trim(),
+      email:        email.toLowerCase().trim(),
       password,
       authProvider: 'local',
-      role: userRole
+      role,
     });
 
-    // ── Email Tasdiqlash Tokeni ──
     const verifyToken = user.generateEmailVerificationToken();
     await user.save({ validateBeforeSave: false });
 
-    // ── Tasdiqlash emaili yuborish ──
     const verifyUrl = `${process.env.CLIENT_URL}/verify-email?token=${verifyToken}`;
     try {
       await sendEmail({
         to:      user.email,
-        subject: 'SecureAuth — Emailingizni tasdiqlang',
+        subject: 'ShoxPay — Emailingizni tasdiqlang',
         html: `
           <h2>Salom, ${user.firstName}!</h2>
-          <p>Hisobingizni faollashtirish uchun quyidagi tugmani bosing:</p>
-          <a href="${verifyUrl}" style="background:#22d3a5;color:#000;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
+          <p>Hisobingizni faollashtirish uchun tugmani bosing:</p>
+          <a href="${verifyUrl}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
             Emailni Tasdiqlash
           </a>
           <p>Havola 24 soat davomida amal qiladi.</p>
-          <p>Agar siz ro'yxatdan o'tmagan bo'lsangiz, bu emailni e'tiborsiz qoldiring.</p>
-        `
+        `,
       });
     } catch (emailErr) {
-      console.error('Email yuborishda xato:', emailErr);
-      // Email xatosi ro'yxatdan o'tishni to'xtatmasin
+      console.error('Email yuborishda xato:', emailErr.message);
     }
 
     res.status(201).json({
       success: true,
-      message: 'Hisob yaratildi! Emailingizni tasdiqlang.',
+      message: "Hisob yaratildi! Emailingizni tasdiqlang.",
       data: {
         id:        user._id,
         firstName: user.firstName,
         lastName:  user.lastName,
-        email:     user.email
-      }
+        email:     user.email,
+      },
     });
 
   } catch (err) {
     console.error('Register xatosi:', err);
     if (err.code === 11000) {
-      return res.status(400).json({ success: false, message: 'Bu email allaqachon ro\'yxatdan o\'tgan' });
+      return res.status(400).json({ success: false, message: "Bu email allaqachon ro'yxatdan o'tgan" });
     }
-    res.status(500).json({ success: false, message: 'Server xatosi. Keyinroq urinib ko\'ring.' });
+    res.status(500).json({ success: false, message: "Server xatosi. Keyinroq urinib ko'ring." });
   }
 };
 
@@ -154,90 +154,76 @@ exports.register = async (req, res) => {
 // ══════════════════════════════════════
 exports.login = async (req, res) => {
   try {
+    console.log('🔍 LOGIN | NODE_ENV:', process.env.NODE_ENV, '| COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN);
+
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email va parol kiritilishi shart' });
+      return res.status(400).json({ success: false, message: "Email va parol kiritilishi shart" });
     }
-
     if (!validator.isEmail(email)) {
-      return res.status(400).json({ success: false, message: 'Noto\'g\'ri email format' });
+      return res.status(400).json({ success: false, message: "Noto'g'ri email format" });
     }
 
-    // Parol fieldini ham olish (select: false bo'lgani uchun)
     const user = await User.findOne({ email: email.toLowerCase() })
       .select('+password +failedLoginAttempts +accountLockedUntil +isActive');
 
-    // ── Timing-safe: foydalanuvchi topilmasa ham hash qilish ──
     if (!user) {
       await new Promise(r => setTimeout(r, 300 + Math.random() * 200));
-      return res.status(401).json({
-        success: false,
-        message: 'Email yoki parol noto\'g\'ri'
-      });
+      return res.status(401).json({ success: false, message: "Email yoki parol noto'g'ri" });
     }
 
-    // ── Hisob bloklanganmi? ──
-    if (user.isLocked()) {
-      const remaining = Math.ceil((user.accountLockedUntil - Date.now()) / 1000 / 60);
+    if (user.isLocked && user.isLocked()) {
+      const remaining = Math.ceil((user.accountLockedUntil - Date.now()) / 60000);
       return res.status(423).json({
         success: false,
-        message: `Hisob vaqtincha bloklangan. ${remaining} daqiqadan so'ng urinib ko'ring.`
+        message: `Hisob vaqtincha bloklangan. ${remaining} daqiqadan so'ng urinib ko'ring.`,
       });
     }
 
-    // ── Google OAuth hisobi uchun parol yo'q ──
     if (user.authProvider === 'google' && !user.password) {
       return res.status(400).json({
         success: false,
-        message: 'Bu hisob Google orqali yaratilgan. Google bilan kiring.'
+        message: "Bu hisob Google orqali yaratilgan. Google bilan kiring.",
       });
     }
 
-    // ── Parolni Tekshirish ──
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      await user.onLoginFail();
-      const attemptsLeft = Math.max(0, 10 - user.failedLoginAttempts);
+      if (user.onLoginFail) await user.onLoginFail();
+      const attemptsLeft = Math.max(0, 10 - (user.failedLoginAttempts || 0));
       return res.status(401).json({
         success: false,
-        message: `Email yoki parol noto'g'ri. ${attemptsLeft > 0 ? `${attemptsLeft} ta urinish qoldi.` : 'Hisob bloklandi.'}`
+        message: `Email yoki parol noto'g'ri. ${attemptsLeft > 0 ? `${attemptsLeft} ta urinish qoldi.` : 'Hisob bloklandi.'}`,
       });
     }
 
-    // ── Faolmi? ──
     if (!user.isActive) {
-      return res.status(403).json({
-        success: false,
-        message: 'Hisobingiz to\'xtatilgan'
-      });
+      return res.status(403).json({ success: false, message: "Hisobingiz to'xtatilgan" });
     }
 
-    // ── Muvaffaqiyatli login ──
-    await user.onLoginSuccess();
+    if (user.onLoginSuccess) await user.onLoginSuccess();
 
-    // ── Token va Cookie yuborish ──
     sendTokenCookies(res, user._id);
+    console.log('✅ Cookie o\'rnatildi | userId:', user._id);
 
     res.status(200).json({
       success: true,
-      message: 'Muvaffaqiyatli kirdingiz',
-      data: {
-        user: {
-          id:              user._id,
-          firstName:       user.firstName,
-          lastName:        user.lastName,
-          email:           user.email,
-          isEmailVerified: user.isEmailVerified,
-          role:            user.role,
-          avatar:          user.avatar
-        }
-      }
+      message: "Muvaffaqiyatli kirdingiz",
+      user: {
+        _id:             user._id,
+        firstName:       user.firstName,
+        lastName:        user.lastName,
+        email:           user.email,
+        isEmailVerified: user.isEmailVerified,
+        role:            user.role,
+        avatar:          user.avatar || null,
+      },
     });
 
   } catch (err) {
     console.error('Login xatosi:', err);
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
@@ -245,14 +231,27 @@ exports.login = async (req, res) => {
 //  3. LOGOUT
 // ══════════════════════════════════════
 exports.logout = (req, res) => {
-  res.clearCookie('access-token',  { path: '/' });
-  res.clearCookie('refresh-token', { path: '/api/auth/refresh' });
-  res.clearCookie('csrf-token',    { path: '/' });
+  const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+  const isSecure     = !!cookieDomain;
+  const sameSite     = cookieDomain ? 'None' : 'Lax';
 
-  res.status(200).json({
-    success: true,
-    message: 'Muvaffaqiyatli chiqdingiz'
+  res.clearCookie('access-token', {
+    httpOnly: true,
+    secure:   isSecure,
+    domain:   cookieDomain,
+    sameSite: sameSite,
+    path:     '/',
   });
+  res.clearCookie('refresh-token', {
+    httpOnly: true,
+    secure:   isSecure,
+    domain:   cookieDomain,
+    sameSite: sameSite,
+    path:     '/api/auth/refresh',
+  });
+  res.clearCookie('csrf-token', { path: '/' });
+
+  res.status(200).json({ success: true, message: "Muvaffaqiyatli chiqdingiz" });
 };
 
 // ══════════════════════════════════════
@@ -260,21 +259,33 @@ exports.logout = (req, res) => {
 // ══════════════════════════════════════
 exports.refreshToken = async (req, res) => {
   try {
-    const refreshToken = req.cookies && req.cookies['refresh-token'];
+    const refreshToken = req.cookies?.['refresh-token'];
+
     if (!refreshToken) {
-      return res.status(401).json({ success: false, message: 'Refresh token topilmadi' });
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token topilmadi",
+        code:    'NO_REFRESH_TOKEN',
+      });
     }
 
     let decoded;
     try {
-      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET, {
+        issuer:   'shoxpay',
+        audience: 'shoxpay-client',
+      });
     } catch {
-      return res.status(401).json({ success: false, message: 'Noto\'g\'ri refresh token' });
+      return res.status(401).json({
+        success: false,
+        message: "Noto'g'ri yoki muddati tugagan refresh token",
+        code:    'INVALID_REFRESH_TOKEN',
+      });
     }
 
-    const user = await User.findById(decoded.id);
+    const user = await User.findById(decoded.id).select('+isActive');
     if (!user || !user.isActive) {
-      return res.status(401).json({ success: false, message: 'Foydalanuvchi topilmadi' });
+      return res.status(401).json({ success: false, message: "Foydalanuvchi topilmadi" });
     }
 
     sendTokenCookies(res, user._id);
@@ -282,7 +293,7 @@ exports.refreshToken = async (req, res) => {
 
   } catch (err) {
     console.error('Refresh token xatosi:', err);
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
@@ -293,22 +304,17 @@ exports.verifyEmail = async (req, res) => {
   try {
     const { token } = req.query;
     if (!token) {
-      return res.status(400).json({ success: false, message: 'Token kiritilishi shart' });
+      return res.status(400).json({ success: false, message: "Token kiritilishi shart" });
     }
 
-    // Tokenni hash qilish va bazada qidirish
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-
     const user = await User.findOne({
       emailVerificationToken:   hashedToken,
-      emailVerificationExpires: { $gt: Date.now() }
+      emailVerificationExpires: { $gt: Date.now() },
     }).select('+emailVerificationToken +emailVerificationExpires');
 
     if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: 'Token yaroqsiz yoki muddati tugagan'
-      });
+      return res.status(400).json({ success: false, message: "Token yaroqsiz yoki muddati tugagan" });
     }
 
     user.isEmailVerified          = true;
@@ -316,14 +322,11 @@ exports.verifyEmail = async (req, res) => {
     user.emailVerificationExpires = undefined;
     await user.save({ validateBeforeSave: false });
 
-    res.status(200).json({
-      success: true,
-      message: 'Email muvaffaqiyatli tasdiqlandi!'
-    });
+    res.status(200).json({ success: true, message: "Email muvaffaqiyatli tasdiqlandi!" });
 
   } catch (err) {
     console.error('Email tasdiqlash xatosi:', err);
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
@@ -334,18 +337,15 @@ exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
     if (!email || !validator.isEmail(email)) {
-      return res.status(400).json({ success: false, message: 'To\'g\'ri email kiriting' });
+      return res.status(400).json({ success: false, message: "To'g'ri email kiriting" });
     }
 
     const user = await User.findOne({ email: email.toLowerCase() });
-
-    // Timing-safe: foydalanuvchi topilmasa ham muvaffaqiyat deyiladi
-    // (foydalanuvchi enumeratsionini oldini olish)
     if (!user) {
       await new Promise(r => setTimeout(r, 500 + Math.random() * 300));
       return res.status(200).json({
         success: true,
-        message: 'Agar bu email ro\'yxatdan o\'tgan bo\'lsa, tiklash havolasi yuborildi'
+        message: "Agar bu email ro'yxatdan o'tgan bo'lsa, tiklash havolasi yuborildi",
       });
     }
 
@@ -356,32 +356,28 @@ exports.forgotPassword = async (req, res) => {
     try {
       await sendEmail({
         to:      user.email,
-        subject: 'SecureAuth — Parolni tiklash',
+        subject: 'ShoxPay — Parolni tiklash',
         html: `
           <h2>Parolni tiklash</h2>
-          <p>Siz parolni tiklash so'rovi yubordingiz. Quyidagi tugmani bosing:</p>
-          <a href="${resetUrl}" style="background:#6c63ff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
+          <p>Quyidagi tugmani bosing:</p>
+          <a href="${resetUrl}" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
             Parolni Tiklash
           </a>
-          <p>Bu havola <strong>1 soat</strong> davomida amal qiladi.</p>
-          <p>Agar siz so'rov yubormagan bo'lsangiz, bu emailni e'tiborsiz qoldiring.</p>
-        `
+          <p>Havola <strong>1 soat</strong> davomida amal qiladi.</p>
+        `,
       });
     } catch (emailErr) {
       user.passwordResetToken   = undefined;
       user.passwordResetExpires = undefined;
       await user.save({ validateBeforeSave: false });
-      return res.status(500).json({ success: false, message: 'Email yuborishda xato' });
+      return res.status(500).json({ success: false, message: "Email yuborishda xato" });
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Parolni tiklash havolasi emailga yuborildi'
-    });
+    res.status(200).json({ success: true, message: "Parolni tiklash havolasi emailga yuborildi" });
 
   } catch (err) {
     console.error('Forgot password xatosi:', err);
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
@@ -393,26 +389,23 @@ exports.resetPassword = async (req, res) => {
     const { token, password, confirmPassword } = req.body;
 
     if (!token || !password || !confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Barcha maydonlarni to\'ldiring' });
+      return res.status(400).json({ success: false, message: "Barcha maydonlarni to'ldiring" });
     }
-
     if (password !== confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Parollar mos kelmaydi' });
+      return res.status(400).json({ success: false, message: "Parollar mos kelmaydi" });
     }
-
     if (password.length < 8) {
-      return res.status(400).json({ success: false, message: 'Parol kamida 8 ta belgi bo\'lishi kerak' });
+      return res.status(400).json({ success: false, message: "Parol kamida 8 ta belgi bo'lishi kerak" });
     }
 
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-
     const user = await User.findOne({
       passwordResetToken:   hashedToken,
-      passwordResetExpires: { $gt: Date.now() }
+      passwordResetExpires: { $gt: Date.now() },
     }).select('+passwordResetToken +passwordResetExpires');
 
     if (!user) {
-      return res.status(400).json({ success: false, message: 'Token yaroqsiz yoki muddati tugagan' });
+      return res.status(400).json({ success: false, message: "Token yaroqsiz yoki muddati tugagan" });
     }
 
     user.password             = password;
@@ -422,72 +415,81 @@ exports.resetPassword = async (req, res) => {
     user.accountLockedUntil   = null;
     await user.save();
 
-    // Barcha sessiyalarni bekor qilish (cookie'larni tozalash)
-    res.clearCookie('access-token');
-    res.clearCookie('refresh-token');
+    const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+    res.clearCookie('access-token',  { path: '/', domain: cookieDomain });
+    res.clearCookie('refresh-token', { path: '/api/auth/refresh', domain: cookieDomain });
 
-    res.status(200).json({
-      success: true,
-      message: 'Parol muvaffaqiyatli yangilandi. Endi kiring.'
-    });
+    res.status(200).json({ success: true, message: "Parol muvaffaqiyatli yangilandi. Endi kiring." });
 
   } catch (err) {
     console.error('Reset password xatosi:', err);
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
 // ══════════════════════════════════════
-//  8. JORIY FOYDALANUVCHI
+//  8. JORIY FOYDALANUVCHI (/api/auth/me)
 // ══════════════════════════════════════
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const userId = req.user._id || req.user.id;
+    const user   = await User.findById(userId);
+
     if (!user) {
-      return res.status(404).json({ success: false, message: 'Foydalanuvchi topilmadi' });
+      return res.status(404).json({ success: false, message: "Foydalanuvchi topilmadi" });
     }
-    res.status(200).json({ success: true, data: user.toSafeObject() });
+
+    res.status(200).json({
+      success: true,
+      data: user.toSafeObject ? user.toSafeObject() : {
+        _id:             user._id,
+        firstName:       user.firstName,
+        lastName:        user.lastName,
+        email:           user.email,
+        role:            user.role,
+        isEmailVerified: user.isEmailVerified,
+        avatar:          user.avatar || null,
+        cardNumber:      user.cardNumber || null,
+      },
+    });
+
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    console.error('getMe xatosi:', err);
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
 // ══════════════════════════════════════
-//  9. EXCHANGE TICKET (Ilovalararo xavfsiz o'tish)
+//  9. EXCHANGE TICKET
 // ══════════════════════════════════════
-
-// In-memory storage (Vaqtinchalik, Redis bo'lsa yaxshi)
 const exchangeTickets = new Map();
-const ticketResults   = new Map(); // Keshlangan natijalar (Double-call uchun)
+const ticketResults   = new Map();
 
-// Har minutda eskirgan ticketlarni tozalash
 setInterval(() => {
   const now = Date.now();
-  for (const [id, data] of exchangeTickets.entries()) {
+  for (const [id, data] of exchangeTickets) {
     if (data.expiresAt < now) exchangeTickets.delete(id);
   }
-  // Keshni ham tozalash (masalan, 5 daqiqadan oshganlari)
-  for (const [id, data] of ticketResults.entries()) {
-    if (data.timestamp + 300000 < now) ticketResults.delete(id);
+  for (const [id, data] of ticketResults) {
+    if (data.timestamp + 300_000 < now) ticketResults.delete(id);
   }
-}, 60000);
+}, 60_000);
 
 exports.createExchangeTicket = async (req, res) => {
   try {
-    const ticketId = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + 120 * 1000; // 2 daqiqa amal qiladi
+    const ticketId  = crypto.randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + 120_000;
 
     exchangeTickets.set(ticketId, {
-      userId: req.user.id,
-      expiresAt
+      userId: req.user._id || req.user.id,
+      expiresAt,
     });
 
-    res.status(200).json({
-      success: true,
-      ticket: ticketId
-    });
+    res.status(200).json({ success: true, ticket: ticketId });
+
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    console.error('createExchangeTicket xatosi:', err);
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
 
@@ -495,62 +497,55 @@ exports.exchangeTicket = async (req, res) => {
   try {
     const { ticket } = req.body;
     if (!ticket) {
-      return res.status(400).json({ success: false, message: 'Ticket kiritilishi shart' });
+      return res.status(400).json({ success: false, message: "Ticket kiritilishi shart" });
     }
 
-    // ─── DOUBLE-CALL (STRICT MODE) PROTECTION ───
-    // Agar bu ticket allaqachon so'ralgan bo'lsa (oxirgi 10 soniya ichida), 
-    // keshdagi javobni qaytaramiz (Xatolik bermaslik uchun)
     if (ticketResults.has(ticket)) {
-      console.log('🛡️ [Backend] Ticket Double-call aniqlandi (Cached result yuborilmoqda)');
+      console.log('🛡️ Ticket double-call — kesh javob yuborildi');
       return res.status(200).json(ticketResults.get(ticket).payload);
     }
 
     const data = exchangeTickets.get(ticket);
     if (!data || data.expiresAt < Date.now()) {
       if (data) exchangeTickets.delete(ticket);
-      return res.status(400).json({ success: false, message: 'Ticket yaroqsiz yoki muddati tugagan' });
+      return res.status(400).json({ success: false, message: "Ticket yaroqsiz yoki muddati tugagan" });
     }
 
-    // Bir martalik ishlatish: asl ticketni darhol o'chiramiz
     exchangeTickets.delete(ticket);
 
     const user = await User.findById(data.userId);
     if (!user || !user.isActive) {
-      return res.status(404).json({ success: false, message: 'Foydalanuvchi topilmadi' });
+      return res.status(404).json({ success: false, message: "Foydalanuvchi topilmadi" });
     }
 
-    // Token va Cookie yuborish
-    const { accessToken } = sendTokenCookies(res, user._id);
+    sendTokenCookies(res, user._id);
 
     const responsePayload = {
       success: true,
       data: {
         user: {
-          id:              user._id,
+          _id:             user._id,
           firstName:       user.firstName,
           lastName:        user.lastName,
           email:           user.email,
           isEmailVerified: user.isEmailVerified,
           role:            user.role,
-          avatar:          user.avatar,
-          cardNumber:      user.cardNumber
+          avatar:          user.avatar || null,
+          cardNumber:      user.cardNumber || null,
         },
-        accessToken
-      }
+      },
     };
 
-    // ─── KESHGA SAQLASH (10 soniya davomida xavfsiz qayta chaqirish uchun) ───
-    ticketResults.set(ticket, {
-      payload: responsePayload,
-      timestamp: Date.now()
-    });
-    // 10 soniyadan keyin keshdan o'chirib yuborish
-    setTimeout(() => ticketResults.delete(ticket), 10000);
+    ticketResults.set(ticket, { payload: responsePayload, timestamp: Date.now() });
+    setTimeout(() => ticketResults.delete(ticket), 10_000);
 
     res.status(200).json(responsePayload);
+
   } catch (err) {
-    console.error('Exchange ticket xatosi:', err);
-    res.status(500).json({ success: false, message: 'Server xatosi' });
+    console.error('exchangeTicket xatosi:', err);
+    res.status(500).json({ success: false, message: "Server xatosi" });
   }
 };
+
+// ✅ googleController import qilishi uchun
+module.exports.sendTokenCookies = sendTokenCookies;
